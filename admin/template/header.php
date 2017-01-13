@@ -90,7 +90,7 @@ $title = $pagetitle.' &middot; '.cl($SITENAME);
 		queue_script('gscrop',GSBACK);
 		queue_style('gscrop',GSBACK);
 	}
-
+	
     // HTMLEDITOR INIT
     // ckeditor editorcss
     if (file_exists(GSTHEMESPATH .getGlobal('TEMPLATE')."/editor.css")) {
@@ -99,6 +99,14 @@ $title = $pagetitle.' &middot; '.cl($SITENAME);
     // ckeditor customconfig
     if (file_exists(GSTHEMESPATH .getDef('GSEDITORCONFIGFILE'))) {
         $configjs =  $SITEURL.getRelPath(GSTHEMESPATH).getDef('GSEDITORCONFIGFILE');
+    }
+
+    function isAutoSave(){
+    	if(!getDef('GSAJAXSAVE',true)) return false;
+    	if(getDef('GSUSEDRAFTS',true)){
+    		return !isset($_GET['nodraft']);
+    	}
+    	return true;
     }
     ?>
 
@@ -124,7 +132,7 @@ $title = $pagetitle.' &middot; '.cl($SITENAME);
             echo '		var editorTheme = "'.$editor_theme."\";\n";
         }
 
-        if(getDef('GSAUTOSAVE',true)){
+        if(get_filename_id()=='edit' && isAutoSave()){
         	$autosaveintvl = getdef('GSAUTOSAVEINTERVAL');
         	echo "		// edit autosave\n";
         	echo '		var GSAUTOSAVEPERIOD = ' . (!is_int($autosaveintvl) ? 10 : $autosaveintvl).";\n";
@@ -148,6 +156,7 @@ $title = $pagetitle.' &middot; '.cl($SITENAME);
             baseHref                     : '<?php echo getGlobal('SITEURL'); ?>'
             <?php if(getGlobal('EDTOOL')) echo ",toolbar: " . returnJsArray(getGlobal('EDTOOL')); ?>
 <?php       if(getGlobal('EDOPTIONS')) echo ','.trim(getGlobal('EDOPTIONS')); ?>
+			<?php if(getDef("GSCKETSTAMP",true)) echo ",timestamp : '".getDef("GSCKETSTAMP") . "'\n"; ?>
         };
 
         // wipe the ckeditor shim, so it does not interfere with the real one

@@ -704,7 +704,11 @@ function do_reg($text, $regex) {
  */
 function is_valid_xml($file) {
 	$xmlv = getXML($file);
-	if ($xmlv) return true;
+	if (gettype($xmlv) !== 'object' || !in_array(get_class($xmlv),array('SimpleXMLExtended','SimpleXML'))) {
+		// debugLog($xmlv);
+		return;
+	}
+	return true;
 }
 
 /**
@@ -994,11 +998,11 @@ function getPagesRow($page,$level,$index,$parent,$children){
 	if ($page['title'] == '' )        { $pagetitle       = '[No Title] &nbsp;&raquo;&nbsp; <em>'. $page['url'] .'</em>';} else { $pagetitle = $page['title']; }
 	if ($page['menuStatus'] != '' )   { $pagemenustatus  = ' <span class="label label-ghost">'.i18n_r('MENUITEM_SUBTITLE').'</span>'; }
 	if ($page['private'] != '' )      { $pageprivate     = ' <span class="label label-ghost">'.i18n_r('PRIVATE_SUBTITLE').'</span>'; } 
-	if (pageHasDraft($page['url']))   { $pagedraft       = ' <span class="label label-ghost">'.lowercase(i18n_r('LABEL_DRAFT')).'</span>'; }
+	if (getDef('GSUSEDRAFTS') && pageHasDraft($page['url']))   { $pagedraft       = ' <span class="label label-ghost">'.lowercase(i18n_r('LABEL_DRAFT')).'</span>'; }
 	if ($page['url'] == getDef('GSINDEXSLUG'))     { $pageindex       = ' <span class="label label-ghost">'.i18n_r('HOMEPAGE_SUBTITLE').'</span>'; }
 	if(dateIsToday($page['pubDate'])) { $pagepubdate     = ' <span class="datetoday">'. output_date($page['pubDate']) . '</span>';} else { $pagepubdate = '<span>'. output_date($page['pubDate']) . "</span>";}
 
-	$menu .= '<td class="pagetitle">'. $indentation .'<a title="'.i18n_r('EDITPAGE_TITLE').': '. var_out($pagetitle) .'" href="edit.php?id='. $page['url'] .'" >'. cl($pagetitle) .'</a>';
+	$menu .= '<td class="pagetitle break">'. $indentation .'<a title="'.i18n_r('EDITPAGE_TITLE').': '. var_out($pagetitle) .'" href="edit.php?id='. $page['url'] .'" >'. cl($pagetitle) .'</a>';
 	$menu .= '<div class="showstatus toggle" >'. $pageindex .  $pagedraft . $pageprivate . $pagemenustatus .'</div></td>'; // keywords used for filtering
 	$menu .= '<td style="width:80px;text-align:right;" ><span>'.$pagepubdate.'</span></td>';
 	$menu .= '<td class="secondarylink" >';
@@ -1302,14 +1306,19 @@ function get_pages_menu_dropdown($parentitem, $menu, $level, $id = null, $idleve
  *
  * @param string $type, default is 'core'
  * @param array $args, default is empty
+ * @param  bool $cached force cached check only, do not use curl
  * 
  * @returns string
  */
 
-function get_api_details($type='core', $args=null) {
+function get_api_details($type='core', $args=null, $cached = false) {
 	GLOBAL $debugApi,$nocache,$nocurl;
 
 	include(GSADMININCPATH.'configuration.php');
+
+	if($cached){
+		debug_api_details("API REQEUSTS DISABLED, using cache files only");
+	}
 
 	# core api details
 	if ($type=='core') {
@@ -1339,16 +1348,25 @@ function get_api_details($type='core', $args=null) {
 	$cachefile = md5($fetch_this_api).'.txt';
 	$cacheExpire = 39600; // 11 minutes
 
-	if(!$nocache) debug_api_details('cache check for ' . $fetch_this_api.' ' .$cachefile);
+	if(!$nocache || $cached) debug_api_details('cache file check - ' . $fetch_this_api.' ' .$cachefile);
 	else debug_api_details('cache check: disabled');
 
 	$cacheAge = file_exists(GSCACHEPATH.$cachefile) ? filemtime(GSCACHEPATH.$cachefile) : '';
 	debug_api_details('cache age: ' . output_datetime($cacheAge));
 
+
+	// api disabled and no cache file exists
+	if($cached && empty($cacheAge)){
+		debug_api_details('cache file does not exist - ' . GSCACHEPATH.$cachefile);
+		debug_api_details();
+		return '{"status":-1}';
+	}
+
 	if (!$nocache && !empty($cacheAge) && (time() - $cacheExpire) < $cacheAge ) {
+		debug_api_details('cache file time - ' . $cacheAge . ' (' . (time() - $cacheAge) . ')' );
 		# grab the api request from the cache
 		$data = read_file(GSCACHEPATH.$cachefile);
-		debug_api_details('returning api cache ' . GSCACHEPATH.$cachefile);
+		debug_api_details('returning cache file - ' . GSCACHEPATH.$cachefile);
 	} else {	
 		# make the api call
 		if (function_exists('curl_init') && function_exists('curl_exec') && !$nocurl) {
@@ -1423,6 +1441,7 @@ function get_api_details($type='core', $args=null) {
 			debug_api_details("fopen data: " .$data);		
 		} else {  
 			debug_api_details("No api methods available");						
+			debug_api_details();						
 			return;
 		}
 	
@@ -1441,8 +1460,10 @@ function get_api_details($type='core', $args=null) {
 		
 		debug_api_details($data);
 			save_file(GSCACHEPATH.$cachefile,$data);
+		debug_api_details();		
 			return $data;
 		}	
+	debug_api_details();	
 	return $data;
 }
 
@@ -1452,9 +1473,10 @@ function get_api_details($type='core', $args=null) {
  * @param  string $prefix  prefix to log
  * @return str             log msg
  */
-function debug_api_details($msg,$prefix = "API: "){
+function debug_api_details($msg = null ,$prefix = "API: "){
 	GLOBAL $debugApi;
 	if(!$debugApi && !getDef('GSDEBUGAPI',true)) return;
+	if(!isset($msg)) $msg = str_repeat('-',80);
 	debugLog($prefix.$msg);
 }
 
@@ -1499,34 +1521,34 @@ function generate_sitemap() {
 		
 		foreach ($pagesSorted as $page)
 		{
-			if ($page['url'] != '404')
-			{		
-				if ($page['private'] != 'Y')
-				{
-					// set <loc>
-					$pageLoc = find_url($page['url'], $page['parent'],'full');
-					// set <lastmod>
-					$tmpDate = date("Y-m-d H:i:s", strtotime($page['pubDate']));
-					$pageLastMod = makeIso8601TimeStamp($tmpDate);
-					
-					// set <changefreq>
-					$pageChangeFreq = 'weekly';
-					
-					// set <priority>
-					if ($page['menuStatus'] == 'Y') {
-						$pagePriority = '1.0';
-					} else {
-						$pagePriority = '0.5';
-					}
-					
-					//add to sitemap
-					$url_item = $xml->addChild('url');
-					$url_item->addChild('loc', $pageLoc);
-					$url_item->addChild('lastmod', $pageLastMod);
-					$url_item->addChild('changefreq', $pageChangeFreq);
-					$url_item->addChild('priority', $pagePriority);
-				}
+			if ($page['url'] == '404') continue;  // exclude 404 page
+			if ($page['url'] == '403') continue;  // exclude 403 page
+			if ($page['private'] == 'Y') continue; // exclude private
+			if (isset($page['metarNoIndex']) && $page['metarNoIndex'] == '1') continue; // exclude noindex
+
+			// set <loc>
+			$pageLoc = find_url($page['url'], $page['parent'],'full');
+			// set <lastmod>
+			$tmpDate = date("Y-m-d H:i:s", strtotime($page['pubDate']));
+			$pageLastMod = makeIso8601TimeStamp($tmpDate);
+			
+			// set <changefreq>
+			$pageChangeFreq = 'weekly'; // change freq
+			
+			// set <priority>
+			// @todo withc multi menu support, which menu ? any ? add supporting functions
+			if ($page['menuStatus'] == 'Y') {
+				$pagePriority = '1.0'; // in menu priority
+			} else {
+				$pagePriority = '0.5'; // not in menu priority
 			}
+			
+			//add to sitemap
+			$url_item = $xml->addChild('url');
+			$url_item->addChild('loc', $pageLoc);
+			$url_item->addChild('lastmod', $pageLastMod);
+			$url_item->addChild('changefreq', $pageChangeFreq);
+			$url_item->addChild('priority', $pagePriority);
 		}
 		
 		//create xml file
@@ -1658,6 +1680,26 @@ function getExcerpt($str, $len = 200, $striphtml = true, $ellipsis = '...', $bre
 
 	if(!$striphtml && $cleanhtml) return trim(cleanHtml($str)) . $ellipsis;
 	return trim($str) . $ellipsis;	
+}
+
+/*
+ * wrapper for getExcerpt for specific page
+ * strip is performed but no filters are executed
+ */
+function getPageExcerpt($pageid,$len = 200, $striphtml = true, $ellipsis = '...', $break = false, $cleanhtml = true){
+	$content = returnPageContent($pageid);
+	if(getDef('GSCONTENTSTRIP',true)) $content = strip_content($content);	
+	return getExcerpt($content,$len,$striphtml,$ellipsis,$break,$cleanhtml);
+}
+
+/**
+ * PRCE compiled test
+ * test if PCRE is compiled with UTF-8 and unicode property support
+ */
+function PCRETest(){
+	if ( ! @preg_match('/^.$/u', 'ñ')) return false; // UTF-8 support
+	if ( ! @preg_match('/^\pL$/u', 'ñ')) return false; // Unicode property support (enable-unicode-properties)
+	return true;
 }
 
 /**
@@ -2049,14 +2091,32 @@ function outputCollectionTags($collectionid,$data){
 	echo '</div>';
 }
 
-function addComponentItem($xml,$title,$value,$active,$slug = null){
 
-	if ($title != null && !empty($title)) {
-		if ( $slug == null || _id($slug) == '') {
-			$slug  = to7bit($title, 'UTF-8');
-			$slug  = clean_url($slug); 
+/**
+ * getCollectionItemSlug
+ * get collection item slug, clean with default fallback
+ * @since  3.4
+ * @param  string $slug    slug
+ * @param  string $default fallback slug
+ * @return string          clean slug
+ */
+function getCollectionItemSlug($slug,$title = 'unknown'){
+	$slug = trim($slug);
+	if ( $slug == null || empty($slug)){
+		if (!empty($title)){
+			if(trim($title) == '') return;
 		}
-		
+		$slug = $title;
+	}
+	$slug = prepareSlug($slug,$title);
+	if(empty($slug)) return; // errormode return null
+	return $slug;
+}
+
+function addComponentItem($xml,$title,$value,$active,$slug = null){
+		$slug = getCollectionItemSlug($slug,$title);
+		if($slug == null) return; // errormode return null
+
 		$title    = safe_slash_html($title);
 		$value    = safe_slash_html($value);
 		$disabled = $active;
@@ -2072,7 +2132,6 @@ function addComponentItem($xml,$title,$value,$active,$slug = null){
 		$c_note->addCData($value);
 		$c_note     = $component->addChild('disabled');
 		$c_note->addCData($disabled);
-	}
 	// debugLog(var_dump($component->asXML()));
 	return $xml;
 }

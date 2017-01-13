@@ -39,6 +39,9 @@ define('GSIMAGEWIDTH', '200');
 # Set override CHMOD mode
 #define('GSCHMOD', 0755);
 
+# Disable chmod operations
+# define('GSDOCHMOD',false);
+
 # Enable Canonical Redirects?
 #define('GSCANONICAL', 1);
 
@@ -117,5 +120,8 @@ define('GSSUPPRESSERRORS',true);
 # GSFRONT, GSBACK or GSBOTH definitions enable this for front and/or backends
 # define('GSNOFRAME',GSBOTH); # prevent in frames ALWAYS
 #define('GSNOFRAME',false);  # prevent in frames NEVER
+
+# GS can format its xml files before saving them if you require human readable source for them
+# define('GSFORMATXML',true);
 
 ?>

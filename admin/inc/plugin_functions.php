@@ -102,7 +102,7 @@ function registerInactivePlugins($apilookup = false){
 		if ($en!=='true' || !file_exists(GSPLUGINPATH . $file) || $SAFEMODE){
 			if($apilookup){
 				// check api to get names of inactive plugins etc.
-		 		$apiback  = get_api_details('plugin', $file);
+	  $apiback = get_api_details('plugin', $file, getDef('GSNOPLUGINCHECK',true));
 		  		$response = json_decode($apiback);
 		  		if ($response and $response->status == 'successful') {
 					register_plugin( pathinfo_filename($file), $response->name, 'disabled', $response->owner, '', i18n_r('PLUGIN_DISABLED'), '', '');
@@ -121,36 +121,65 @@ function registerInactivePlugins($apilookup = false){
  * change_plugin
  * 
  * Enable/Disable a plugin
- *
+ * NOTE THAT LIVE_PLUGINS USES STRINGS `true` `false`
+ * 
  * @since 2.04
  * @uses $live_plugins
  *
- * @param str  $name pluginid
+ * @param str  $pluginid pluginid
  * @param bool $active default=null, sets plugin active or inactive, default=toggle
+ * @return bool returns $active state, null on errors
  */
-function change_plugin($name,$active=null){
+function change_plugin($pluginid,$active=null){
+	// toggles if $active was not specified (null)
+	if(is_null($active)) $active = !pluginIsActive($pluginid); // invert
+
+	// update plugin state
+	$status = setPluginState($pluginid,$active);
+	if(!isset($status)) return; // save failed, do no hooks
+
+	return $active; // return final state of plugin active
+}
+
+/**
+ * set a plugins active state 
+ * wrapper for setting plugins active inactive, since it uses string booleans and is confusing
+ * @since  3.4
+ * @param string $pluginid accepts pluginid or plugin filename, normalizes to filename
+ * @param mixed $state    accepts true, false, 'true', 'false'
+ */
+function setPluginState($pluginid,$state){
 	global $live_plugins;
 
-	$name = pathinfo_filename($name).'.php'; // normalize to pluginid
-	if (isset($live_plugins[$name])){
-		// set plugin active | inactive
-		if(isset($active) and is_bool($active)) {
-			$live_plugins[$name] = $active ? 'true' : 'false';
-			create_pluginsxml(true);
-			return;
-		}
+	$pluginid = pathinfo_filename($pluginid).'.php'; // normalize to pluginid
+	if(!pluginIsInstalled($pluginid)) return; // plugin id not found
+	
+	$state = strToBool($state);
 
-		// else we toggle
-		if ($live_plugins[$name]=="true"){
-			$live_plugins[$name]="false";
-		} else {
-			$live_plugins[$name]="true";
-		}
+	// save string bools
+	if($state) $live_plugins[$pluginid] = 'true';
+	else $live_plugins[$pluginid] = 'false';
 
-		if($live_plugins[$name] == 'false') exec_action('plugin-inactivate'); // @hook plugin-inactivate a plugin was inactivated
+	$status = create_pluginsxml(true);
+	// do hooks
+	if($state === true) exec_action('plugin-activate'); // @hook plugin-activate a plugin was activated
+	else exec_action('plugin-deactivate'); // @hook plugin-deactivate a plugin was deactivated
 
-		create_pluginsxml(true); // save change; @todo, currently reloads all files and recreates entire xml not just node, is wasteful
-	}
+	// debugDie($live_plugins);
+
+	return $status;
+}
+
+/**
+ * check if a plugin is installed
+ * @since  3.4
+ * @param  string $pluginid pluginid
+ * @return bool             true if plugin is found in live_plugins array
+ */
+function pluginIsInstalled($pluginid){
+	GLOBAL $live_plugins;
+	$pluginid = pathinfo_filename($pluginid).'.php'; // normalize to pluginid
+	return(isset($live_plugins[$pluginid])); // plugin id not found
 }
 
 /**
@@ -163,9 +192,9 @@ function change_plugin($name,$active=null){
  */
 function pluginIsActive($pluginid){
 	GLOBAL $live_plugins;
-	return isset($live_plugins[$pluginid.'.php']) && ($live_plugins[$pluginid.'.php'] == 'true' || $live_plugins[$pluginid.'.php'] === true);
+	$pluginid = pathinfo_filename($pluginid).'.php'; // normalize to pluginid		
+	return isset($live_plugins[$pluginid]) && ($live_plugins[$pluginid] == 'true' || $live_plugins[$pluginid] === true);
 }
-
 
 /**
  * read_pluginsxml
@@ -392,9 +421,8 @@ function exec_action($a) {
 }
 
 function exec_action_callback($hook){
-	return call_user_func_array($hook['function'], $hook['args']);
+	return call_gs_func_array($hook['function'], $hook['args']);
 }
-
 
 /**
  * Add Filter
@@ -440,13 +468,15 @@ function exec_filter($filter_name,$data=array()) {
 }
 
 function exec_filter_callback($hook,&$data=array()){
+	if(!pluginhookstat('filter',$hook['hook'])) return $data; // skip
 	$data = call_user_func_array($hook['function'], array_merge(array($data),$hook['args']));
+	pluginhookstat('filter',$hook['hook'],false);
+	return $data;
 }
 
 function exec_filter_complete($data=array()){
 	return $data;
 }
-
 
 /**
  * Add Security Filter
@@ -510,6 +540,45 @@ function exec_secfilter_complete($data=array()){
  * hook helper functions
  */
 
+
+/**
+ * plugin hook call stat bucket
+ * bumps call count and sets or clears active flag for cyclical loop checks
+ * @todo  could make active an active call count and allow nested filters by count, say allow 1 instead of none if it was desirable
+ * @since  3.4
+ * @param  str  $id     hook type id
+ * @param  str  $hook   hook name
+ * @param  boolean $active mark active
+ * @return bool          false if start already flagged
+ */
+function pluginhookstat($id,$hook,$active = true){
+	global $plugincallstats;
+
+	if(!isset($plugincallstats[$id])) $plugincallstats[$id] = array();
+	if(!isset($plugincallstats[$id][$hook])){
+		$plugincallstats[$id][$hook] = array();
+		$plugincallstats[$id][$hook]['active'] = false;
+		$plugincallstats[$id][$hook]['cnt'] = 0;
+	}
+
+	// closing call
+	if(!$active){
+		$plugincallstats[$id][$hook]['active'] === false;
+		return false;
+	}
+
+	// open call, loop flag
+	if(isset($plugincallstats[$id][$hook]['active']) && $plugincallstats[$id][$hook]['active'] === true) return false;
+	
+    // set active
+	$plugincallstats[$id][$hook]['active'] == true;
+
+	// bump call count
+	$plugincallstats[$id][$hook]['cnt']++;
+	// debugLog($plugincallstats);
+	return true;
+}
+
 /**
  * prepare arguments for hook exec by removing required arguments
  * @param  array  $args    args array
@@ -561,7 +630,10 @@ function prepareHookCallbackArgs($hook,$args){
  */
 function add_hook(&$hook_array, &$hook_hash_array, $hook_name, $hook_function, $args = array(), $priority = null, $expectedargs = 0) {
 	
-	if(isset($priority) && !is_int($priority)) die('priority is not NAN'); 
+	if(isset($priority) && !is_int($priority)){
+		debugLog(__FUNCTION__ . ': invalid priority');
+		$priority = null;
+	}
 
 	if($priority === 0) $priority = 1; # fixup 0 
 	clamp($priority,1,10,10); # clamp priority, min:1, max:10, default:10
@@ -623,6 +695,7 @@ function remove_hook(&$hook_hash_array, $hook_name, $hook_function){
  * @param array $hook_array hook array
  * @param array $hook_hash_array hook hash array
  * @param string $hook_name name of hook to execute
+ * @return returns hook callback result
  */
 function exec_hook(&$hook_array, &$hook_hash_array, $hook_name, $callback = '', $data = array(), $complete = '') {
 	if(!$hook_array || !$hook_hash_array){
@@ -643,9 +716,10 @@ function exec_hook(&$hook_array, &$hook_hash_array, $hook_name, $callback = '', 
 		if(count(current(reset($hooks))) == 1){
 			$hook = current($hooks);
 			if(!isset($hook) || !isset($hook[0])) return;
-			$callback($hook[0],$data);
+			$res = $callback($hook[0],$data);
 			// if callback call it
-			if(function_exists($complete)) return $complete($data);			
+			if(function_exists($complete)) return $complete($data);
+			return $res;		
 		}
 	}
 
@@ -655,12 +729,13 @@ function exec_hook(&$hook_array, &$hook_hash_array, $hook_name, $callback = '', 
 	foreach ($hooks as $priority){
 		foreach($priority as $hook){
 			if(!isset($hook)) continue;
-			$callback($hook,$data);
+			$res = $callback($hook,$data);
 		}
 	}
 
 	// if complete handler call it
 	if(function_exists($complete)) return $complete($data);
+	return $res;
 
 }
 

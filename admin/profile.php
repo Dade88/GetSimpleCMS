@@ -84,7 +84,7 @@ else{
 	// empty user defaults
 	$data = new stdClass();
 	$data->HTMLEDITOR = true;
-	$data->LANG     = $SITELANG;
+	$data->LANG     = '';
 	$data->EMAIL    = '';
 	$data->TIMEZONE = $SITETIMEZONE;
 	$data->NAME     = '';
@@ -187,11 +187,12 @@ if(isset($_POST['submitted']) && isset($_POST['user'])){
 		$resetfile = GSUSERSPATH . getPWDresetName(_id($userid), 'xml');
 		if (file_exists($resetfile)) delete_file($resetfile);
 
-
 		exec_action('settings-user'); // @hook settings-user LEGACY pre-save of a users settings
 		exec_action('profile-save');  // @hook profiel-user pre-save of a users settings
 		
-		if (! XMLsave($xml, GSUSERSPATH . $file) ) {
+		$status = XMLsave($xml, GSUSERSPATH . $file);
+
+		if (!$status) {
 			$error = i18n_r('CHMOD_ERROR');
 			break;
 		}
@@ -199,18 +200,18 @@ if(isset($_POST['submitted']) && isset($_POST['user'])){
 		# see new language file immediately
 		if(!empty($lang)) include(GSLANGPATH.$lang.'.php');
 		
-		if($editing ) $success = sprintf(i18n_r('ER_YOUR_CHANGES'), $userid).'. <a href="profile.php?undo&nonce='.get_nonce("undo").'&userid='.$userid.'">'.i18n_r('UNDO').'</a>';
-		else if($adding) $success = sprintf(i18n_r('ER_YOUR_CHANGES'), $userid).'. <a href="profile.php?undo&new&nonce='.get_nonce("undo").'&userid='.$userid.'">'.i18n_r('UNDO').'</a>';
-
-		if($adding) exec_action('profile-added'); // @hook user-added a user was added
-		else exec_action('profile-edited');       // @hook user-edit  a user was edited
-		
 		if($adding){
+			$success = sprintf(i18n_r('ER_YOUR_CHANGES'), $userid).'. <a href="profile.php?undo&new&nonce='.get_nonce("undo").'&userid='.$userid.'">'.i18n_r('UNDO').'</a>';
+			exec_action('profile-added'); // @hook user-added a user was added
 			// redirect("?userid=".$userid.'&success='.$success);
-			// cant redirect since we have no notifications for saving profiles
+			// @todo: cant redirect since we have no notifications for saving profiles
 			// done adding
 			$adding  = false;
-			$editing = true;
+			$editing = true;			
+		}
+		else {
+			$success = sprintf(i18n_r('ER_YOUR_CHANGES'), $userid).'. <a href="profile.php?undo&nonce='.get_nonce("undo").'&userid='.$userid.'">'.i18n_r('UNDO').'</a>';
+			exec_action('profile-edited'); // @hook user-edit  a user was edited
 		}
 	}
 	while (false);
@@ -222,17 +223,16 @@ if ($data->HTMLEDITOR != '' ) { $editorchck = 'checked'; }
 # get all available language files
 // if ($data->LANG == ''){ $LANG = GSDEFAULTLANG; }
 
+$langs = '<option value="">-- '.i18n_r('NONE').' --</option>';
 if (count($lang_array) != 0) {
 	sort($lang_array);
-	$sel = ''; $langs = '';
+	$sel = '';
 	foreach ($lang_array as $lfile){
 		$lfile = basename($lfile,".php");
 		if ($data->LANG == $lfile) { $sel="selected"; }
 		$langs .= '<option '.$sel.' value="'.$lfile.'" >'.$lfile.'</option>';
 		$sel = '';
 	}
-} else {
-	$langs = '<option value="" selected="selected" >-- '.i18n_r('NONE').' --</option>';
 }
 
 $pagetitle = i18n_r('USER_PROFILE');

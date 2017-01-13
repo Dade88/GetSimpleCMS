@@ -65,7 +65,7 @@ list($imgwidth, $imgheight, $imgtype, $imgattr) = getimagesize($src_folder .$sub
 
 if (file_exists($thumb_folder . 'thumbnail.' . $src)) {
 	list($thwidth, $thheight, $thtype, $athttr) = getimagesize($thumb_folder . 'thumbnail.'.$src);
-	$thumb_exists = ' &nbsp; | &nbsp; <a href="'.$thumb_url . 'thumbnail.'. rawurlencode($src) .'" rel="fancybox_i" >'.i18n_r('CURRENT_THUMBNAIL').'</a> <code>'.$thwidth.'x'.$thheight.'</code>';
+	$thumb_exists = ' &nbsp; | &nbsp; <a href="'.$thumb_url . 'thumbnail.'. rawurlencode($src) . '?t='.time(). '" rel="fancybox_i" >'.i18n_r('CURRENT_THUMBNAIL').'</a> <code>'.$thwidth.'x'.$thheight.'</code>';
 }else{
 	// if thumb is missing recreate it
 	if(genStdThumb($subPath,$src)){
@@ -117,7 +117,7 @@ include('template/include-nav.php'); ?>
 			echo i18n_r('ORIGINAL_IMG') .'<br/><code>'.$imgwidth.'x'.$imgheight .'</code>';
 			echo "</a></div>";
 
-			echo '<div class="thumbcontainer"><a href="'.$thumb_url . 'thumbnail.'. rawurlencode($src) .'" rel="fancybox_i" >';
+			echo '<div class="thumbcontainer"><a href="'.$thumb_url . 'thumbnail.'. rawurlencode($src) .'?t='.time().'" rel="fancybox_i" >';
 			echo '<div><img src="'.$thumb_url . 'thumbnail.'. rawurlencode($src).'?'.time().'"></div>';
 			echo i18n_r('CURRENT_THUMBNAIL') .'<br/><code>'.$thwidth.'x'.$thheight .'</code>';
 			echo "</a></div>";
@@ -149,6 +149,9 @@ include('template/include-nav.php'); ?>
 				<p id="code-imgthumb-html">&lt;a href="<?php echo $src_url. rawurlencode($src); ?>" class="gs_image_link" >&lt;img src="<?php echo $thumb_url.'thumbnail.'.rawurlencode($src); ?>" class="gs_thumb" height="<?php echo $thheight; ?>" width="<?php echo $thwidth; ?>" alt="" />&lt;/a></p>
 				<?php } ?>
 			</div>
+			<?php 
+				exec_action('image-extras'); // @hook image-extras provide extra image features here
+			?>
 	</div>
 
 <?php
@@ -189,9 +192,11 @@ if($jcrop){ ?>
 
 	<script>
 	  jQuery(document).ready(function() { 
-	    		
+	    	
+	  		jcrop_container = $("#cropbox");
+
 			$(window).load(function(){
-				var api = $.Jcrop('#cropbox',{
+				jcrop_container.Jcrop({
 					onChange: updateCoords,
 					onSelect: updateCoords,
 					onRelease: updateCoordsReset,
@@ -207,21 +212,55 @@ if($jcrop){ ?>
 					handleSize: '5px'
 			  	});
 
-				$('#cropbox').data('jcrop',api);
+				getApi = function(){
+					return 	jcrop_container.Jcrop('api');
+				}
 
-				$('.jcrop-tracker').bind('keydown mousemove mousedown',function (e) {
-					// console.log('event: ' + e.type);
-					var options = api.getOptions();
+				jcrop_container.data('jcrop',getApi());
+
+				getOptions = function(){
+					api = getApi();
+					return api.opt;
+				}
+
+				jcropClear = function(){
+					getApi().deleteAll();
+				}
+
+				// custom function to clear selection, jcrop no longer includes this functionality
+				$.Jcrop.prototype.deleteAll = function() {
+				  var _this = this;
+				  this.ui.multi.forEach(function(item){
+				    // _this.deleteSelection(item); // not sure the difference
+				  	_this.removeSelection(item)
+				  });
+				  $('.jcrop-shades > div').width(0).height(0); // remove shades
+				  updateCoordsReset();
+				};
+
+				// bind to events to catch control/command for aspect control and Esq for clear
+				// @todo blocking F5 in chrome for some reason, it should not block any propagation
+				$('.jcrop-active').bind('keydown mousemove mousedown',function (e) {
+					// console.log('event: ' + e.type + " " + e.keyCode);
+					if(e.type == 'keydown' && e.keyCode == 27){
+						jcropClear();
+					}
+					
+					var options = getOptions();
+
 					if(e.ctrlKey || e.metaKey) {
+						// console.log(options);
 						if(options.aspectRatio != 1){
-							console.log("aspectratio ON");
-							api.setOptions({ aspectRatio: 1 });
-							// api.focus(); // probably not needed setoptions reloads the entire thing
+							// console.log("aspectratio ON");
+							getApi().setOptions({ aspectRatio: 1 });
+							// jcrop_api.focus(); // probably not needed setoptions reloads the entire thing
+							return;
 						}
-					} else {
+					} 
+					else {
 						if(options.aspectRatio == 1){
-							console.log("aspectratio OFF");
-							api.setOptions({ aspectRatio: 0 });
+							// console.log("aspectratio OFF");
+							getApi().setOptions({ aspectRatio: 0 });
 							// api.focus();
 						}							
 					}
